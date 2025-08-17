@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Beta Coaster</title>
+<style>
+body { margin:0; overflow:hidden; font-family:sans-serif; background:#87CEEB; }
+canvas { display:block; }
+#homeScreen, #endScreen {
+  position:absolute; top:0; left:0; width:100vw; height:100vh;
+  background:#87CEEB; display:flex; flex-direction:column;
+  justify-content:center; align-items:center; z-index:10;
+}
+button {
+  padding:12px 24px; font-size:20px; margin:10px; cursor:pointer;
+  border:none; border-radius:10px; background:#0077ff; color:white;
+}
+#rideTime { font-size:24px; margin-bottom:20px; }
+</style>
+</head>
+<body>
+
+<div id="homeScreen">
+  <div id="rideTime">Ride Duration: 35s</div>
+  <button id="startBtn">Beta Coaster</button>
+</div>
+
+<div id="endScreen" style="display:none;">
+  <button id="rideAgain">Ride Again</button>
+  <button id="homeBtn">Home</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/loaders/FontLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/geometries/TextGeometry.js"></script>
+<script>
+let scene, camera, renderer, curve, cart, endText;
+let progress=0, riding=false, startTime=null;
+const rideDuration=35000; // 35 seconds
+
+const homeScreen=document.getElementById("homeScreen");
+const endScreen=document.getElementById("endScreen");
+const startBtn=document.getElementById("startBtn");
+const rideAgainBtn=document.getElementById("rideAgain");
+const homeBtn=document.getElementById("homeBtn");
+
+let yaw=0, pitch=0;
+let isDragging=false, previousX=0, previousY=0;
+
+startBtn.onclick=startRide;
+rideAgainBtn.onclick=startRide;
+homeBtn.onclick=goHome;
+
+init();
+
+function init(){
+  scene=new THREE.Scene();
+  scene.background = new THREE.Color(0x87CEEB); // blue sky
+
+  camera=new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight,0.1,2000);
+  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Lights
+  const light=new THREE.DirectionalLight(0xffffff,1);
+  light.position.set(50,50,50);
+  scene.add(light);
+  scene.add(new THREE.AmbientLight(0x888888));
+
+  // Ground
+  const ground=new THREE.Mesh(
+    new THREE.PlaneGeometry(1000,1000),
+    new THREE.MeshLambertMaterial({color:0x228B22})
+  );
+  ground.rotation.x=-Math.PI/2;
+  scene.add(ground);
+
+  // Track curve
+  curve=new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0,5,0),
+    new THREE.Vector3(15,15,-20),
+    new THREE.Vector3(30,10,-40),
+    new THREE.Vector3(40,25,-60),
+    new THREE.Vector3(30,5,-80),
+    new THREE.Vector3(0,15,-100),
+    new THREE.Vector3(-25,25,-120),
+    new THREE.Vector3(-40,10,-140),
+    new THREE.Vector3(0,15,-160),
+    new THREE.Vector3(0,10,-180)
+  ], false, "catmullrom", 0.5);
+
+  // Rails
+  const railMat=new THREE.MeshStandardMaterial({color:"blue", metalness:0.6, roughness:0.3});
+  const railGeo=new THREE.TubeGeometry(curve,600,0.2,8,false);
+  const track=new THREE.Mesh(railGeo, railMat);
+  scene.add(track);
+
+  // Cart
+  const cartGeo=new THREE.BoxGeometry(1,0.5,1.5);
+  const cartMat=new THREE.MeshStandardMaterial({color:"red"});
+  cart=new THREE.Mesh(cartGeo,cartMat);
+  scene.add(cart);
+
+  // End Text
+  const loader = new THREE.FontLoader();
+  loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function(font) {
+    const textGeo = new THREE.TextGeometry('END', {
+      font: font,
+      size: 5,
+      height: 1
+    });
+    const textMat = new THREE.MeshStandardMaterial({color:0xffff00});
+    endText = new THREE.Mesh(textGeo, textMat);
+    const endPos = curve.getPointAt(1);
+    endText.position.set(endPos.x - 2.5, endPos.y + 5, endPos.z);
+    scene.add(endText);
+  });
+
+  // Mouse rotation
+  renderer.domElement.addEventListener('mousedown', e=>{isDragging=true; previousX=e.clientX; previousY=e.clientY;});
+  renderer.domElement.addEventListener('mousemove', e=>{
+    if(isDragging){
+      yaw += (e.clientX-previousX)*0.002;
+      pitch += (e.clientY-previousY)*0.002;
+      pitch = Math.max(-Math.PI/4, Math.min(Math.PI/4, pitch));
+      previousX=e.clientX; previousY=e.clientY;
+    }
+  });
+  renderer.domElement.addEventListener('mouseup', ()=>{isDragging=false;});
+  renderer.domElement.addEventListener('mouseleave', ()=>{isDragging=false;});
+
+  window.addEventListener("resize", ()=>{
+    camera.aspect=window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+}
+
+function startRide(){
+  homeScreen.style.display="none";
+  endScreen.style.display="none";
+  riding=true;
+  progress=0;
+  startTime=performance.now();
+  animate();
+}
+
+function goHome(){
+  homeScreen.style.display="flex";
+  endScreen.style.display="none";
+  riding=false;
+}
+
+function animate(){
+  if(!riding) return;
+  requestAnimationFrame(animate);
+
+  const elapsed=performance.now()-startTime;
+
+  // Slow down near end
+  let rawProgress = elapsed/rideDuration;
+  if(rawProgress > 0.85) rawProgress = 0.85 + (rawProgress-0.85)*0.3; 
+
+  progress = Math.min(rawProgress,1);
+
+  if(progress>=1){
+    riding=false;
+    endScreen.style.display="flex";
+    return;
+  }
+
+  const pos=curve.getPointAt(progress);
+  const tangent=curve.getTangentAt(progress);
+
+  // Cart position
+  cart.position.copy(pos);
+  cart.lookAt(pos.clone().add(tangent));
+
+  // Camera
+  const camOffset = tangent.clone().multiplyScalar(0.8).add(new THREE.Vector3(0,0.5,0));
+  camera.position.copy(pos.clone().add(camOffset));
+
+  // User rotation
+  const forward = tangent.clone().normalize();
+  forward.applyAxisAngle(new THREE.Vector3(0,1,0), yaw);
+  const lookTarget = camera.position.clone().add(forward);
+  lookTarget.y += pitch;
+  camera.lookAt(lookTarget);
+
+  renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>
